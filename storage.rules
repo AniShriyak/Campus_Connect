@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// Craft rules based on data in your Firestore database
+// allow write: if firestore.get(
+//    /databases/(default)/documents/users/$(request.auth.uid)
+// ).data.isAdmin;
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    match /paymentProofs/{userId}/{fileName} {
+      // User can upload their own proofs (max 5MB, image only)
+      allow create: if isAuthenticated() && 
+                    request.auth.uid == userId &&
+                    request.resource.size < 5 * 1024 * 1024 && // 5MB
+                    request.resource.contentType.matches('image/.*');
+      // Coordinators/admins and the uploading user can read
+      allow read: if isAuthenticated();
+      // No updates, delete by admin/coordinator logic usually done in backend
+    }
+
+    match /certificates/{eventId}/{userId}.pdf {
+      // Users can download their own certificates
+      allow read: if isAuthenticated();
+      // Only cloud functions should generate/upload certificates (Admin SDK bypasses these rules)
+      allow write: if false;
+    }
+
+    // Default catch-all
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

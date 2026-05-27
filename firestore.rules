@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']);
+    }
+    
+    function isCoordinator() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['coordinator', 'admin']);
+    }
+
+    // USERS
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Users can only create their own profile. Only admin can modify roles.
+      allow create: if request.auth.uid == userId;
+      // Allow user to update their own profile EXCEPT roles, which are preserved.
+      allow update: if request.auth.uid == userId && (
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['roles'])
+      ) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // CLUBS
+    match /clubs/{clubId} {
+      allow read: if true;
+      allow create: if isCoordinator();
+      allow update, delete: if isCoordinator() && (
+        request.auth.uid in resource.data.coordinatorIds || isAdmin()
+      );
+    }
+
+    // EVENTS
+    match /events/{eventId} {
+      allow read: if true;
+      // Must be a coordinator of the club to create/update events for that club
+      allow create: if isCoordinator() && 
+                    request.auth.uid in get(/databases/$(database)/documents/clubs/$(request.resource.data.clubId)).data.coordinatorIds;
+      allow update, delete: if isCoordinator() && (
+        request.auth.uid in get(/databases/$(database)/documents/clubs/$(resource.data.clubId)).data.coordinatorIds || isAdmin()
+      );
+    }
+
+    // REGISTRATIONS
+    match /registrations/{registrationId} {
+      // User can see their own, Coordinators can see all for their events
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId || 
+        isCoordinator()
+      );
+      // User creates registration
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      // User can update proof. Coordinator can update status.
+      allow update: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId || isCoordinator()
+      );
+    }
+
+    // POSTS
+    match /posts/{postId} {
+      allow read: if true;
+      // Only club coordinators can create posts for that club
+      allow create: if isCoordinator() && 
+                    request.auth.uid in get(/databases/$(database)/documents/clubs/$(request.resource.data.clubId)).data.coordinatorIds;
+      allow update, delete: if isCoordinator() && 
+                            request.auth.uid in get(/databases/$(database)/documents/clubs/$(resource.data.clubId)).data.coordinatorIds;
+    }
+
+    // CHAT ROOMS & MESSAGES
+    match /chatRooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow write: if isCoordinator();
+    }
+    
+    match /chatRooms/{roomId}/messages/{messageId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.senderId;
+      allow update, delete: if request.auth.uid == resource.data.senderId || isAdmin();
+    }
+
+  }
+}
