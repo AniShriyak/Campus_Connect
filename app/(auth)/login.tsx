@@ -1,12 +1,14 @@
 // @ts-nocheck
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
 import { useRouter } from 'expo-router';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { useState } from 'react';
+import { Controller, useForm } from 'react-hook-form';
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as z from 'zod';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '../../src/services/firebase';
+import { useAuthStore } from '../../src/store/useAuthStore';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email format'),
@@ -18,18 +20,78 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export default function LoginScreen() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const { setUser, setProfile } = useAuthStore();
 
   const { control, handleSubmit, formState: { errors } } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+    }
   });
 
   const onSubmit = async (data: LoginFormValues) => {
+    console.log('[LOGIN_DIAGNOSTIC] 1. Starting login process for:', data.email);
     setIsLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, data.email, data.password);
+      console.log('[LOGIN_DIAGNOSTIC] 2. Calling signInWithEmailAndPassword...');
+      const result = await signInWithEmailAndPassword(auth, data.email, data.password);
+      console.log('[LOGIN_DIAGNOSTIC] 3. signInWithEmailAndPassword success! user.uid:', result.user.uid);
       // Firebase auth state listener in _layout.tsx will handle the redirect
     } catch (error: any) {
-      Alert.alert('Login Failed', error.message || 'Please check your credentials and try again.');
+      console.error('[LOGIN_DIAGNOSTIC] Error Details:', error.code, error.message);
+      Alert.alert(
+        'Login Failed',
+        `Code: ${error.code}\nMessage: ${error.message || 'Please check your credentials and try again.'}\n\nTip: If it says "invalid-api-key", try restarting your Metro bundler.`
+      );
+    } finally {
+      console.log('[LOGIN_DIAGNOSTIC] 4. Login function finally block reached.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleDevLogin = async (role: 'student' | 'coordinator') => {
+    setIsLoading(true);
+    try {
+      const mockProfile = {
+        id: role === 'student' ? 'mock-student-id' : 'mock-coordinator-id',
+        fullName: role === 'student' ? 'Demo Student' : 'Demo Coordinator',
+        email: role === 'student' ? 'student@college.ac.in' : 'coordinator@college.ac.in',
+        college: 'Campus Connect University',
+        roles: [role],
+        interests: ['Robotics', 'Coding', 'Music'],
+        joinedClubs: role === 'student' ? ['club-1', 'club-2'] : ['club-1'],
+        createdAt: Date.now()
+      };
+      
+      await AsyncStorage.setItem('@mock_profile', JSON.stringify(mockProfile));
+      
+      if (typeof window !== 'undefined') {
+        (window as any)._mockUser = true;
+      }
+      
+      setUser({ uid: mockProfile.id, email: mockProfile.email } as any);
+      setProfile(mockProfile);
+    } catch (err) {
+      Alert.alert('Bypass Failed', 'Could not save mock session.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearData = async () => {
+    setIsLoading(true);
+    try {
+      await AsyncStorage.clear();
+      await signOut(auth);
+      if (typeof window !== 'undefined') {
+        (window as any)._mockUser = false;
+      }
+      useAuthStore.getState().logout();
+      Alert.alert('Success', 'All local mock data and sessions have been cleared!');
+    } catch (err) {
+      console.error(err);
+      Alert.alert('Error', 'Failed to clear data.');
     } finally {
       setIsLoading(false);
     }
@@ -77,8 +139,8 @@ export default function LoginScreen() {
         />
         {errors.password && <Text style={styles.errorText}>{errors.password.message}</Text>}
 
-        <TouchableOpacity 
-          style={[styles.button, isLoading && styles.buttonDisabled]} 
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
           onPress={handleSubmit(onSubmit)}
           disabled={isLoading}
         >
@@ -88,10 +150,26 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Log In</Text>
           )}
         </TouchableOpacity>
-        
+
         <TouchableOpacity style={styles.linkButton} onPress={() => router.push('/(auth)/signup')}>
           <Text style={styles.linkText}>Don't have an account? Sign up</Text>
         </TouchableOpacity>
+
+        <View style={styles.devBypassContainer}>
+          <Text style={styles.devBypassTitle}>Developer Bypass (Mock Mode)</Text>
+          <Text style={styles.devBypassSubtitle}>Instant login bypass for local testing on Web/Expo Go.</Text>
+          <View style={styles.devBypassButtons}>
+            <TouchableOpacity style={[styles.devButton, { backgroundColor: '#FF3B30' }]} onPress={() => handleDevLogin('student')}>
+              <Text style={styles.devButtonText}>Student Mode</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.devButton, { backgroundColor: '#6B4CE6' }]} onPress={() => handleDevLogin('coordinator')}>
+              <Text style={styles.devButtonText}>Coordinator Mode</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity style={[styles.devButton, { backgroundColor: '#333', marginTop: 8, width: '100%' }]} onPress={handleClearData}>
+            <Text style={styles.devButtonText}>Clear All Data & Sign Out</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -101,7 +179,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 24,
-    backgroundColor: '#fff',
+    backgroundColor: '#F5F3FF',
     justifyContent: 'center',
   },
   title: {
@@ -134,7 +212,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 16,
     fontSize: 16,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#fff',
     marginBottom: 4,
   },
   inputError: {
@@ -147,14 +225,14 @@ const styles = StyleSheet.create({
   },
   button: {
     height: 50,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#6B4CE6',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 24,
   },
   buttonDisabled: {
-    backgroundColor: '#99caff',
+    backgroundColor: '#C4B5FD',
   },
   buttonText: {
     color: '#fff',
@@ -167,8 +245,46 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   linkText: {
-    color: '#007AFF',
+    color: '#6B4CE6',
     fontSize: 14,
-    fontWeight: '500',
-  }
+    fontWeight: '600',
+  },
+  devBypassContainer: {
+    marginTop: 32,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#EEF2F6',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  devBypassTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  devBypassSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  devBypassButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  devButton: {
+    flex: 1,
+    height: 40,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  devButtonText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
 });

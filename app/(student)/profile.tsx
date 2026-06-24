@@ -1,369 +1,181 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { Image } from 'expo-image';
-import { useQuery } from '@tanstack/react-query';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { db, auth } from '../../src/services/firebase';
-import { useAuthStore } from '../../src/store/useAuthStore';
+import { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { signOut } from 'firebase/auth';
+import { useRouter } from 'expo-router';
+import { useAuthStore } from '../../src/store/useAuthStore';
+import { Club, Registration, Event } from '../../src/types';
+import { getUserClubs } from '../../src/services/clubService';
+import { getUserRegistrations } from '../../src/services/registrationService';
+import { getEventById } from '../../src/services/eventService';
 
-interface Club {
-  id: string;
-  name: string;
-  category: string;
-  logoUrl?: string;
-}
+export default function ProfileScreen() {
+  const router = useRouter();
+  const { user, profile, logout, switchRole } = useAuthStore();
+  
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [registrations, setRegistrations] = useState<(Registration & { eventData?: Event })[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
 
-interface Registration {
-  id: string;
-  eventId: string;
-  eventTitle: string;
-  clubId: string;
-  status: 'pending' | 'approved' | 'attended' | 'rejected';
-  certificateUrl?: string;
-}
-
-export default function StudentProfile() {
-  const { profile, logout } = useAuthStore();
-  const [activeSegment, setActiveSegment] = useState<'clubs' | 'events'>('clubs');
-
-  // Fetch student's joined clubs
-  const { data: joinedClubs = [], isLoading: isLoadingClubs } = useQuery<Club[]>({
-    queryKey: ['myClubs', profile?.joinedClubs],
-    enabled: !!profile?.joinedClubs && profile.joinedClubs.length > 0,
-    queryFn: async () => {
-      const clubs: Club[] = [];
-      for (const clubId of profile?.joinedClubs || []) {
-        const clubDoc = await getDoc(doc(db, 'clubs', clubId));
-        if (clubDoc.exists()) {
-          clubs.push({ id: clubDoc.id, ...clubDoc.data() } as Club);
-        }
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      setLoading(true);
+      try {
+        const [userClubs, userRegs] = await Promise.all([
+          getUserClubs(user.uid),
+          getUserRegistrations(user.uid)
+        ]);
+        
+        // Fetch event titles for registrations
+        const regsWithEvents = await Promise.all(
+          userRegs.map(async (reg) => {
+            const evt = await getEventById(reg.eventId);
+            return { ...reg, eventData: evt || undefined };
+          })
+        );
+        
+        setClubs(userClubs);
+        setRegistrations(regsWithEvents);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
       }
-      return clubs;
-    }
-  });
+    };
+    loadData();
+  }, [user]);
 
-  // Fetch student's event registrations
-  const { data: registrations = [], isLoading: isLoadingRegs } = useQuery<Registration[]>({
-    queryKey: ['myRegistrations', profile?.id],
-    enabled: !!profile?.id,
-    queryFn: async () => {
-      const q = query(collection(db, 'registrations'), where('userId', '==', profile?.id));
-      const snap = await getDocs(q);
-      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
-    }
-  });
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      logout();
-    } catch (e: any) {
-      Alert.alert('Sign Out Failed', e.message);
-    }
+  const handleSwitchMode = async () => {
+    setSwitching(true);
+    await switchRole('coordinator');
+    setSwitching(false);
+    router.replace('/(coordinator)/' as any);
   };
 
+  if (loading || !profile) return <View style={styles.center}><ActivityIndicator size="large" color="#6B4CE6" /></View>;
+
+  const hasCoordinatorRole = profile.roles.includes('coordinator') || profile.roles.includes('admin');
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
-      {/* Profile Card */}
-      <View style={styles.profileCard}>
-        <Image
-          source={profile?.profileImage || 'https://picsum.photos/200'}
-          style={styles.avatar}
-        />
-        <Text style={styles.name}>{profile?.fullName || 'Student Name'}</Text>
-        <Text style={styles.email}>{profile?.email || 'student@college.ac.in'}</Text>
-        <Text style={styles.college}>{profile?.college || 'College Name'}</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Profile</Text>
+      </View>
 
-        {/* Interests */}
-        {profile?.interests && profile.interests.length > 0 && (
-          <View style={styles.interestsContainer}>
-            {profile.interests.map(interest => (
-              <View key={interest} style={styles.interestTag}>
-                <Text style={styles.interestText}>{interest}</Text>
-              </View>
-            ))}
+      <ScrollView>
+        {/* User Info */}
+        <View style={styles.userInfo}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{profile.fullName.charAt(0).toUpperCase()}</Text>
           </View>
-        )}
-      </View>
+          <Text style={styles.userName}>{profile.fullName}</Text>
+          <Text style={styles.userEmail}>{profile.email}</Text>
+          
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleText}>Current Mode: Student</Text>
+          </View>
 
-      {/* Segmented Control */}
-      <View style={styles.segmentContainer}>
-        <TouchableOpacity
-          style={[styles.segmentButton, activeSegment === 'clubs' && styles.segmentActive]}
-          onPress={() => setActiveSegment('clubs')}
-        >
-          <Ionicons name="people-outline" size={18} color={activeSegment === 'clubs' ? '#007AFF' : '#636366'} />
-          <Text style={[styles.segmentText, activeSegment === 'clubs' && styles.segmentTextActive]}>
-            Joined Clubs ({profile?.joinedClubs?.length || 0})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.segmentButton, activeSegment === 'events' && styles.segmentActive]}
-          onPress={() => setActiveSegment('events')}
-        >
-          <Ionicons name="calendar-outline" size={18} color={activeSegment === 'events' ? '#007AFF' : '#636366'} />
-          <Text style={[styles.segmentText, activeSegment === 'events' && styles.segmentTextActive]}>
-            My Events ({registrations.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Segment Details */}
-      {activeSegment === 'clubs' ? (
-        <View style={styles.listSection}>
-          {isLoadingClubs ? (
-            <ActivityIndicator size="small" color="#007AFF" />
-          ) : joinedClubs.length === 0 ? (
-            <Text style={styles.emptyText}>You haven't joined any clubs yet.</Text>
-          ) : (
-            joinedClubs.map(club => (
-              <View key={club.id} style={styles.listItem}>
-                <Image source={club.logoUrl || 'https://picsum.photos/100'} style={styles.listLogo} />
-                <View style={styles.listInfo}>
-                  <Text style={styles.listTitle}>{club.name}</Text>
-                  <Text style={styles.listSubtitle}>{club.category}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color="#C7C7CC" />
-              </View>
-            ))
-          )}
+          <TouchableOpacity style={styles.switchButton} onPress={handleSwitchMode} disabled={switching}>
+            <Ionicons name="swap-horizontal" size={20} color="#fff" />
+            <Text style={styles.switchButtonText}>{switching ? "Switching..." : "Switch To Coordinator"}</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        <View style={styles.listSection}>
-          {isLoadingRegs ? (
-            <ActivityIndicator size="small" color="#007AFF" />
-          ) : registrations.length === 0 ? (
+
+        {/* My Events */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>My Registrations</Text>
+          {registrations.length === 0 ? (
             <Text style={styles.emptyText}>You haven't registered for any events yet.</Text>
           ) : (
             registrations.map(reg => (
-              <View key={reg.id} style={styles.listItem}>
-                <View style={styles.eventInfoContainer}>
-                  <Text style={styles.listTitle}>{reg.eventTitle}</Text>
-                  <View style={styles.eventStatusRow}>
-                    <Text style={styles.eventStatusLabel}>Status: </Text>
-                    <Text style={[
-                      styles.statusText,
-                      reg.status === 'approved' && styles.statusApproved,
-                      reg.status === 'attended' && styles.statusAttended,
-                      reg.status === 'pending' && styles.statusPending,
-                      reg.status === 'rejected' && styles.statusRejected,
-                    ]}>
-                      {reg.status}
-                    </Text>
-                  </View>
+              <TouchableOpacity key={reg.id} style={styles.listItem} onPress={() => router.push(`/ticket/${reg.id}` as any)}>
+                <View style={styles.iconCircle}>
+                  <Ionicons name="ticket" size={20} color="#6B4CE6" />
                 </View>
-                {reg.status === 'attended' && reg.certificateUrl && (
-                  <TouchableOpacity style={styles.certificateButton}>
-                    <Ionicons name="ribbon-outline" size={16} color="#FFF" />
-                    <Text style={styles.certificateButtonText}>Certificate</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.listTitle}>{reg.eventData?.title || 'Unknown Event'}</Text>
+                  <Text style={styles.listSubtitle}>Status: {reg.status}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
             ))
           )}
         </View>
-      )}
 
-      {/* Sign Out Button */}
-      <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-        <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
-        <Text style={styles.signOutButtonText}>Sign Out</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* My Clubs */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>My Clubs</Text>
+          {clubs.length === 0 ? (
+            <Text style={styles.emptyText}>You haven't joined any clubs yet.</Text>
+          ) : (
+            clubs.map(club => (
+              <TouchableOpacity key={club.id} style={styles.listItem} onPress={() => router.push(`/club/${club.id}` as any)}>
+                <View style={[styles.iconCircle, { backgroundColor: '#f3e5f5' }]}>
+                  <Ionicons name="people" size={20} color="#9c27b0" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.listTitle}>{club.name}</Text>
+                  <Text style={styles.listSubtitle}>{club.category}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+
+        {/* Certificates */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Certificates</Text>
+          {registrations.filter(r => r.certificateUrl).length === 0 ? (
+            <Text style={styles.emptyText}>No certificates earned yet.</Text>
+          ) : (
+            registrations.filter(r => r.certificateUrl).map(reg => (
+              <TouchableOpacity key={reg.id} style={styles.listItem}>
+                <View style={[styles.iconCircle, { backgroundColor: '#e8f5e9' }]}>
+                  <Ionicons name="document-text" size={20} color="#4caf50" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.listTitle}>{reg.eventData?.title} Certificate</Text>
+                </View>
+                <Ionicons name="download-outline" size={20} color="#666" />
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+
+        <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+          <Text style={styles.logoutText}>Logout</Text>
+        </TouchableOpacity>
+        
+        <View style={{ height: 40 }} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-    paddingTop: 60,
-  },
-  contentContainer: {
-    paddingBottom: 40,
-  },
-  profileCard: {
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 24,
-    padding: 24,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginBottom: 16,
-  },
-  name: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-  },
-  email: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 4,
-  },
-  college: {
-    fontSize: 14,
-    color: '#636366',
-    fontWeight: '500',
-    marginTop: 4,
-  },
-  interestsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginTop: 16,
-  },
-  interestTag: {
-    backgroundColor: '#EEF0F2',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    margin: 4,
-  },
-  interestText: {
-    fontSize: 12,
-    color: '#636366',
-    fontWeight: '600',
-  },
-  segmentContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#EEF0F2',
-    borderRadius: 12,
-    padding: 2,
-    marginHorizontal: 20,
-    marginBottom: 16,
-  },
-  segmentButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  segmentActive: {
-    backgroundColor: '#FFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  segmentText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#636366',
-    marginLeft: 6,
-  },
-  segmentTextActive: {
-    color: '#007AFF',
-  },
-  listSection: {
-    backgroundColor: '#FFF',
-    borderRadius: 24,
-    marginHorizontal: 20,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  listItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2F2F7',
-  },
-  listLogo: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-  },
-  listInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  listTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-  },
-  listSubtitle: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  eventInfoContainer: {
-    flex: 1,
-  },
-  eventStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  eventStatusLabel: {
-    fontSize: 13,
-    color: '#8E8E93',
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    textTransform: 'capitalize',
-  },
-  statusPending: { color: '#FF9500' },
-  statusApproved: { color: '#34C759' },
-  statusAttended: { color: '#007AFF' },
-  statusRejected: { color: '#FF3B30' },
-  certificateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  certificateButtonText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginLeft: 4,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#8E8E93',
-    marginVertical: 20,
-    fontSize: 15,
-  },
-  signOutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFF',
-    marginHorizontal: 20,
-    marginTop: 24,
-    height: 50,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FFD6D6',
-  },
-  signOutButtonText: {
-    color: '#FF3B30',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { padding: 20 },
+  headerTitle: { fontSize: 28, fontWeight: 'bold' },
+  userInfo: { alignItems: 'center', padding: 20, backgroundColor: '#fff', marginHorizontal: 20, borderRadius: 16, elevation: 2, marginBottom: 20 },
+  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#6B4CE6', justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
+  avatarText: { fontSize: 36, color: '#fff', fontWeight: 'bold' },
+  userName: { fontSize: 22, fontWeight: 'bold' },
+  userEmail: { color: '#666', marginTop: 5 },
+  roleBadge: { backgroundColor: '#e9ecef', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginTop: 15 },
+  roleText: { color: '#333', fontWeight: 'bold', fontSize: 12 },
+  switchButton: { flexDirection: 'row', backgroundColor: '#000', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 25, marginTop: 20, alignItems: 'center' },
+  switchButtonText: { color: '#fff', fontWeight: 'bold', marginLeft: 10 },
+  section: { paddingHorizontal: 20, marginBottom: 25 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
+  listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, elevation: 1 },
+  iconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#e3f2fd', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  listTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 4 },
+  listSubtitle: { color: '#888', fontSize: 12 },
+  emptyText: { color: '#888', fontStyle: 'italic', marginLeft: 5 },
+  logoutButton: { marginHorizontal: 20, backgroundColor: '#ffebee', padding: 15, borderRadius: 12, alignItems: 'center' },
+  logoutText: { color: '#d32f2f', fontWeight: 'bold', fontSize: 16 }
 });

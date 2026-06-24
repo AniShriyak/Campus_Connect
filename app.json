@@ -35,6 +35,18 @@
             "imageWidth": 76
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow CampusConnect to access your camera to scan attendance tickets."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow CampusConnect to access your photos to upload payment proof screenshots."
+        }
       ]
     ],
     "experiments": {

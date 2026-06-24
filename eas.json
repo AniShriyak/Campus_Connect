@@ -15,12 +15,30 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCFCc5z7DTrhBzAinbx5D23hGbnTEF8IwU",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "campusconnect-e5b5d.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "campusconnect-e5b5d",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "campusconnect-e5b5d.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "873737944199",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:873737944199:web:13b37f7b36217ece100c22",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-P32JZ1LFBS"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCFCc5z7DTrhBzAinbx5D23hGbnTEF8IwU",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "campusconnect-e5b5d.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "campusconnect-e5b5d",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "campusconnect-e5b5d.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "873737944199",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:873737944199:web:13b37f7b36217ece100c22",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-P32JZ1LFBS"
       }
     }
   },

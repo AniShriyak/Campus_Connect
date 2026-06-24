@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { httpsCallable } from 'firebase/functions';
@@ -46,6 +46,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 8, textAlign: 'center' },
   subtitle: { fontSize: 16, color: '#666', marginBottom: 32, textAlign: 'center' },
   input: { height: 60, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 16, fontSize: 32, letterSpacing: 8, backgroundColor: '#f9f9f9', marginBottom: 24 },
-  button: { height: 50, backgroundColor: '#007AFF', borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  button: { height: 50, backgroundColor: '#6B4CE6', borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' }
 });

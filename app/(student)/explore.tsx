@@ -1,506 +1,187 @@
-// @ts-nocheck
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
-import { Image } from 'expo-image';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { collection, getDocs, query, where, doc, updateDoc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
-import { db, auth } from '../../src/services/firebase';
-import { useAuthStore } from '../../src/store/useAuthStore';
+import { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { Image } from 'expo-image';
+import { useAuthStore } from '../../src/store/useAuthStore';
+import { Club, Event } from '../../src/types';
+import { getClubs, getUserClubs, joinClub } from '../../src/services/clubService';
+import { getAllUpcomingEvents } from '../../src/services/eventService';
 
 const { width } = Dimensions.get('window');
 
-interface Club {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  coverImage?: string;
-  logoUrl?: string;
-  memberCount: number;
-}
-
-interface Event {
-  id: string;
-  clubId: string;
-  clubName: string;
-  title: string;
-  description: string;
-  date: string;
-  time: string;
-  venue: string;
-  entryFee: number;
-  coverImage?: string;
-}
-
 export default function ExploreScreen() {
+  const router = useRouter();
+  const { user } = useAuthStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const { profile, setProfile } = useAuthStore();
-  const queryClient = useQueryClient();
-  const router = useRouter();
+  
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [myClubs, setMyClubs] = useState<Club[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const categories = ['All', 'Technical', 'Cultural', 'Sports', 'Arts'];
+  const categories = ['All', 'Tech', 'Music', 'Art', 'Sports', 'Literature', 'Cultural'];
 
-  // Fetch all clubs
-  const { data: clubs = [], isLoading: isLoadingClubs } = useQuery<Club[]>({
-    queryKey: ['clubs'],
-    queryFn: async () => {
-      const q = query(collection(db, 'clubs'));
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Club));
+  useEffect(() => {
+    loadData();
+  }, [user]);
+
+  const loadData = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [allClubs, userClubs, allEvents] = await Promise.all([
+        getClubs(),
+        getUserClubs(user.uid),
+        getAllUpcomingEvents()
+      ]);
+      setClubs(allClubs);
+      setMyClubs(userClubs);
+      setEvents(allEvents);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
-  });
-
-  // Fetch all events
-  const { data: events = [], isLoading: isLoadingEvents } = useQuery<Event[]>({
-    queryKey: ['events'],
-    queryFn: async () => {
-      const q = query(collection(db, 'events'));
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-    }
-  });
-
-  // Join/Leave club mutation
-  const toggleJoinClubMutation = useMutation({
-    mutationFn: async ({ clubId, isJoined }: { clubId: string; isJoined: boolean }) => {
-      if (!auth.currentUser) throw new Error('Not authenticated');
-      const userRef = doc(db, 'users', auth.currentUser.uid);
-      const clubRef = doc(db, 'clubs', clubId);
-      
-      if (isJoined) {
-        await updateDoc(userRef, {
-          joinedClubs: arrayRemove(clubId)
-        });
-        // Decrement club member count
-        const clubDoc = await getDoc(clubRef);
-        const currentCount = clubDoc.data()?.memberCount || 0;
-        await updateDoc(clubRef, {
-          memberCount: Math.max(0, currentCount - 1)
-        });
-      } else {
-        await updateDoc(userRef, {
-          joinedClubs: arrayUnion(clubId)
-        });
-        // Increment club member count
-        const clubDoc = await getDoc(clubRef);
-        const currentCount = clubDoc.data()?.memberCount || 0;
-        await updateDoc(clubRef, {
-          memberCount: currentCount + 1
-        });
-      }
-      
-      // Return updated interests/profile
-      const updatedUserDoc = await getDoc(userRef);
-      return updatedUserDoc.data();
-    },
-    onSuccess: (data) => {
-      if (data) {
-        setProfile(data as any);
-      }
-      queryClient.invalidateQueries({ queryKey: ['clubs'] });
-    },
-    onError: (error: any) => {
-      Alert.alert('Error', error.message || 'Failed to update club membership.');
-    }
-  });
-
-  const handleJoinPress = (clubId: string) => {
-    const isJoined = profile?.joinedClubs?.includes(clubId) || false;
-    toggleJoinClubMutation.mutate({ clubId, isJoined });
   };
 
-  // Filter logic
-  const filteredClubs = clubs.filter(club => {
-    const matchesSearch = club.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          club.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'All' || club.category.toLowerCase() === selectedCategory.toLowerCase();
-    return matchesSearch && matchesCategory;
+  const handleJoinClub = async (clubId: string) => {
+    if (!user) return;
+    try {
+      await joinClub(user.uid, clubId);
+      await loadData(); // Reload to reflect changes
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
+  const filteredClubs = clubs.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCat = selectedCategory === 'All' || c.category === selectedCategory;
+    return matchesSearch && matchesCat;
   });
 
-  const filteredEvents = events.filter(event => {
-    const matchesSearch = event.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          event.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          event.clubName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
-  });
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#6B4CE6" /></View>;
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Explore</Text>
-        <Text style={styles.headerSubtitle}>Discover clubs and events on campus</Text>
       </View>
 
-      {/* Search Bar */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#8E8E93" style={styles.searchIcon} />
+        <Ionicons name="search" size={20} color="#8E8E93" style={{ marginRight: 8 }} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search clubs or events..."
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholderTextColor="#8E8E93"
         />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={18} color="#8E8E93" />
-          </TouchableOpacity>
-        )}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Category Pills */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesContainer}>
-          {categories.map(category => (
-            <TouchableOpacity
-              key={category}
-              style={[
-                styles.categoryPill,
-                selectedCategory === category && styles.categoryPillSelected
-              ]}
-              onPress={() => setSelectedCategory(category)}
-            >
-              <Text
-                style={[
-                  styles.categoryText,
-                  selectedCategory === category && styles.categoryTextSelected
-                ]}
-              >
-                {category}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Featured Events Section */}
-        {filteredEvents.length > 0 && (
-          <View style={styles.sectionContainer}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Upcoming Events */}
+        {events.length > 0 && (
+          <View style={styles.section}>
             <Text style={styles.sectionTitle}>Upcoming Events</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={width * 0.8 + 16} decelerationRate="fast">
-              {filteredEvents.map(event => (
-                <View key={event.id} style={styles.eventCard}>
-                  <Image
-                    source={event.coverImage || 'https://picsum.photos/400/200'}
-                    style={styles.eventImage}
-                    contentFit="cover"
-                  />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+              {events.map(event => (
+                <TouchableOpacity key={event.id} style={styles.eventCard} onPress={() => router.push(`/event/${event.id}` as any)}>
+                  <Image source={event.coverImage || 'https://via.placeholder.com/400x200'} style={styles.eventImage} />
                   <View style={styles.eventDetails}>
-                    <Text style={styles.eventClub}>{event.clubName}</Text>
-                    <Text style={styles.eventTitleText}>{event.title}</Text>
-                    <View style={styles.eventMeta}>
-                      <Ionicons name="calendar-outline" size={14} color="#666" />
-                      <Text style={styles.eventMetaText}>{event.date}</Text>
-                    </View>
-                    <View style={styles.eventMeta}>
-                      <Ionicons name="location-outline" size={14} color="#666" />
-                      <Text style={styles.eventMetaText}>{event.venue}</Text>
-                    </View>
-                    <View style={styles.eventBottom}>
-                      <Text style={styles.eventFee}>
-                        {event.entryFee === 0 ? 'Free' : `₹${event.entryFee}`}
-                      </Text>
-                      <TouchableOpacity 
-                        style={styles.viewEventButton}
-                        onPress={() => router.push({ pathname: '/(student)/event-details', params: { eventId: event.id } })}
-                      >
-                        <Text style={styles.viewEventButtonText}>View Details</Text>
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={styles.eventTitle} numberOfLines={1}>{event.title}</Text>
+                    <Text style={styles.eventMeta}>{event.date} • {event.venue}</Text>
                   </View>
-                </View>
+                </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
         )}
 
-        {/* Clubs Section */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Campus Clubs</Text>
-          {isLoadingClubs ? (
-            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
-          ) : filteredClubs.length === 0 ? (
-            <Text style={styles.emptyText}>No clubs found matching your search.</Text>
-          ) : (
-            filteredClubs.map(club => {
-              const isJoined = profile?.joinedClubs?.includes(club.id) || false;
-              return (
-                <View key={club.id} style={styles.clubCard}>
-                  <Image
-                    source={club.coverImage || 'https://picsum.photos/400/150'}
-                    style={styles.clubCover}
-                    contentFit="cover"
-                  />
-                  <View style={styles.clubContent}>
-                    <View style={styles.clubHeaderRow}>
-                      <Image
-                        source={club.logoUrl || 'https://picsum.photos/100'}
-                        style={styles.clubLogo}
-                      />
-                      <View style={styles.clubInfo}>
-                        <Text style={styles.clubNameText}>{club.name}</Text>
-                        <Text style={styles.clubMemberCount}>
-                          {club.memberCount || 0} members • {club.category}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.clubDescription} numberOfLines={2}>
-                      {club.description}
-                    </Text>
-                    <View style={styles.clubActions}>
-                      <TouchableOpacity 
-                        style={[styles.joinButton, isJoined && styles.joinedButton]}
-                        onPress={() => handleJoinPress(club.id)}
-                        disabled={toggleJoinClubMutation.isPending}
-                      >
-                        {toggleJoinClubMutation.isPending ? (
-                          <ActivityIndicator size="small" color={isJoined ? '#007AFF' : '#fff'} />
-                        ) : (
-                          <Text style={[styles.joinButtonText, isJoined && styles.joinedButtonText]}>
-                            {isJoined ? 'Joined' : 'Join Club'}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+        {/* My Clubs */}
+        {myClubs.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>My Clubs</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+              {myClubs.map(club => (
+                <TouchableOpacity key={club.id} style={styles.myClubCard} onPress={() => router.push(`/club/${club.id}` as any)}>
+                  <Image source={club.logoUrl || 'https://via.placeholder.com/100'} style={styles.myClubLogo} />
+                  <Text style={styles.myClubName} numberOfLines={1}>{club.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Categories */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 20, marginBottom: 20 }}>
+          {categories.map(cat => (
+            <TouchableOpacity key={cat} onPress={() => setSelectedCategory(cat)} style={[styles.catPill, selectedCategory === cat && styles.catPillActive]}>
+              <Text style={[styles.catText, selectedCategory === cat && styles.catTextActive]}>{cat}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* All Clubs */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>All Clubs</Text>
+          {filteredClubs.map(club => {
+            const isMember = myClubs.some(mc => mc.id === club.id);
+            return (
+              <TouchableOpacity key={club.id} style={styles.clubRow} onPress={() => router.push(`/club/${club.id}` as any)}>
+                <Image source={club.logoUrl || 'https://via.placeholder.com/100'} style={styles.clubRowLogo} />
+                <View style={styles.clubRowInfo}>
+                  <Text style={styles.clubRowName}>{club.name}</Text>
+                  <Text style={styles.clubRowCategory}>{club.category} • {club.memberCount} members</Text>
                 </View>
-              );
-            })
-          )}
+                {!isMember ? (
+                  <TouchableOpacity style={styles.joinBtn} onPress={() => handleJoinClub(club.id as string)}>
+                    <Text style={styles.joinBtnText}>Join</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.joinedBadge}>
+                    <Text style={styles.joinedBadgeText}>Joined</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )
+          })}
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-    paddingTop: 60,
-  },
-  header: {
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 4,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EEF0F2',
-    marginHorizontal: 20,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    height: 44,
-    marginBottom: 16,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    color: '#1C1C1E',
-  },
-  scrollContent: {
-    paddingBottom: 40,
-  },
-  categoriesContainer: {
-    paddingLeft: 20,
-    marginBottom: 24,
-  },
-  categoryPill: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#EEF0F2',
-    marginRight: 8,
-  },
-  categoryPillSelected: {
-    backgroundColor: '#007AFF',
-  },
-  categoryText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#636366',
-  },
-  categoryTextSelected: {
-    color: '#FFF',
-  },
-  sectionContainer: {
-    marginBottom: 28,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  eventCard: {
-    width: width * 0.8,
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    marginLeft: 20,
-    marginRight: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: 'hidden',
-  },
-  eventImage: {
-    width: '100%',
-    height: 140,
-  },
-  eventDetails: {
-    padding: 16,
-  },
-  eventClub: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#8E8E93',
-    textTransform: 'uppercase',
-  },
-  eventTitleText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  eventMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  eventMetaText: {
-    fontSize: 13,
-    color: '#636366',
-    marginLeft: 6,
-  },
-  eventBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F2F2F7',
-    paddingTop: 12,
-  },
-  eventFee: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#34C759',
-  },
-  viewEventButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  viewEventButtonText: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  clubCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    marginHorizontal: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: 'hidden',
-  },
-  clubCover: {
-    width: '100%',
-    height: 100,
-  },
-  clubContent: {
-    padding: 16,
-  },
-  clubHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: -36,
-    marginBottom: 12,
-  },
-  clubLogo: {
-    width: 60,
-    height: 60,
-    borderRadius: 12,
-    borderWidth: 3,
-    borderColor: '#FFF',
-    backgroundColor: '#FFF',
-  },
-  clubInfo: {
-    marginLeft: 12,
-    marginTop: 20,
-    flex: 1,
-  },
-  clubNameText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1C1C1E',
-  },
-  clubMemberCount: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  clubDescription: {
-    fontSize: 14,
-    color: '#636366',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  clubActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  joinButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 100,
-  },
-  joinedButton: {
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#007AFF',
-  },
-  joinButtonText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  joinedButtonText: {
-    color: '#007AFF',
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#8E8E93',
-    marginTop: 20,
-    fontSize: 16,
-  },
+  container: { flex: 1, backgroundColor: '#FAFAFA' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { padding: 20 },
+  headerTitle: { fontSize: 28, fontWeight: 'bold' },
+  searchContainer: { flexDirection: 'row', backgroundColor: '#eee', marginHorizontal: 20, padding: 12, borderRadius: 10, marginBottom: 20, alignItems: 'center' },
+  searchInput: { flex: 1, fontSize: 16 },
+  section: { marginBottom: 30 },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', marginLeft: 20, marginBottom: 15 },
+  eventCard: { width: width * 0.7, backgroundColor: '#fff', borderRadius: 12, marginRight: 15, overflow: 'hidden', elevation: 2 },
+  eventImage: { width: '100%', height: 120 },
+  eventDetails: { padding: 12 },
+  eventTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 4 },
+  eventMeta: { color: '#666', fontSize: 12 },
+  myClubCard: { alignItems: 'center', marginRight: 20, width: 80 },
+  myClubLogo: { width: 70, height: 70, borderRadius: 35, borderWidth: 2, borderColor: '#6B4CE6', marginBottom: 8 },
+  myClubName: { fontSize: 12, textAlign: 'center', color: '#333' },
+  catPill: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#eee', borderRadius: 20, marginRight: 10 },
+  catPillActive: { backgroundColor: '#6B4CE6' },
+  catText: { color: '#666', fontWeight: 'bold' },
+  catTextActive: { color: '#fff' },
+  clubRow: { flexDirection: 'row', backgroundColor: '#fff', marginHorizontal: 20, padding: 15, borderRadius: 12, marginBottom: 10, alignItems: 'center', elevation: 1 },
+  clubRowLogo: { width: 50, height: 50, borderRadius: 25, marginRight: 15 },
+  clubRowInfo: { flex: 1 },
+  clubRowName: { fontWeight: 'bold', fontSize: 16, marginBottom: 4 },
+  clubRowCategory: { color: '#888', fontSize: 12 },
+  joinBtn: { backgroundColor: '#6B4CE6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+  joinBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+  joinedBadge: { backgroundColor: '#e8f5e9', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  joinedBadgeText: { color: '#34C759', fontWeight: 'bold', fontSize: 12 }
 });
